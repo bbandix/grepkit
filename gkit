@@ -1,0 +1,278 @@
+#!/usr/bin/perl -w
+# Copyright (C) 2010, 2011 Andras Becsi (abecsi@inf.u-szeged.hu)
+# Copyright (C) 2010, 2011 University of Szeged,
+# All rights reserved.
+#
+# GrepKit name invented by Zsolt Világos, 2010.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY UNIVERSITY OF SZEGED ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL UNIVERSITY OF SZEGED OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Grep and search tool for developers
+#
+
+use strict;
+use Cwd qw(abs_path realpath);
+use Term::ANSIColor;
+use File::Basename;
+use File::Find;
+use File::Path qw(mkpath);
+use File::Spec::Functions;
+use Getopt::Long;
+
+# Enable bundling of single-character options
+Getopt::Long::Configure ("bundling");
+
+my $pcMode             = 0;
+my $searchMode         = 0;
+my $grepMode           = 1;
+my $programName        = basename($0);
+my $majorVersion       = 0;
+my $minorVersion       = 1;
+
+my $showHelp           = 0;
+my $showVersion        = 0;
+my $isQuiet            = 0;
+my $isVerbose          = 0;
+my $debugOutput        = 0;
+
+my $makefilesOnly      = 0;
+my $layoutTestOnly     = 0;
+
+my $disableColor           = 0;
+my $useExtendedMode    = 0;
+my $isCaseInsensitive  = 0;
+my $shouldExclude      = 0;
+
+my @excludeList        = ();
+
+my $grepCommand        = "";
+my $rootDir            = ".";
+my $buildDir           = "WebKitBuild";
+my $regex              = 0;
+
+my $regexOption        = "";
+my $nameOption         = "";
+
+my @fileFilterOptions      = ();
+my @dirFilterOptions       = ();
+my @additionalFindOptions  = ();
+my @additionalGrepOptions  = ();
+
+my $helpMessage = <<EOF;
+GrepKit v$majorVersion.$minorVersion (2011/01)
+Grep and search tool.
+
+Usage: $programName [options] string
+Main options:
+  -h|--help                       Show this help message. (use -vh to get more help)
+  -V|--version                    Print version information.
+  -q|--[no-]quiet                 Only print file names and disable warning and error messages. (default: $isQuiet)
+  -v|--[no-]verbose               Set the verbose flag to get more verbose output (default: $isVerbose)
+  -D|--[no-]debug                 Set the debug flag to get debug information (default: $debugOutput)
+  -i|--[no-]case-insensitive      Set the case insensitive flag for search and grep. (default: $rootDir)
+  -n                              Disable colored output
+  -E                              Set grep to use string as extended regular expression (default: $useExtendedMode)
+  -r regex                        Search for files which match regex (emacs-style)
+  -f string[,string2...]          Search for files which contain string
+  -d dir[,dir2...]                Search only in specified directories (default: $rootDir)
+  -m                              Only search in Makefiles
+  -l                              Only search in LayoutTests directory
+  --find-opt option               Specify additional commant line option(s) for find
+  --grep-opt option               Specify additional commant line option(s) for grep
+  --root rootDir                  Set the path of the search root.
+  -x|--exclude [string] Exclude lines from output which match the "string" pattern.
+  -p|--patch-count                Patch Counter               {PATCH COUNT MODE}
+  -s|--search                     Run in search mode.         {SEARCH MODE}
+  -g|--grep                       Run in grep mode (default). {GREP MODE}
+EOF
+
+my $verboseUsage = <<EOF;
+Usage: $programName [options] string
+Main options:
+  -h|--help
+          Show short help message. (use -vh to get more help)
+  -V|--version
+          Print version information.
+  -q|--[no-]quiet
+          Set the quiet flag in grep mode: only print file names. (Grep mode only)
+  -v|--[no-]verbose
+          Set the verbose flag to get more verbose output (default: $isVerbose)
+  -D|--[no-]debug
+          Set the debug flag to get debug information (default: $debugOutput)
+  -i|--[no-]case-insensitive
+          Set the case insensitive flag for search and grep.
+  --root rootDir
+          Set the path of the search root. (default: $rootDir)
+  -r
+          Specify emacs-style regular expressions for file name filtering
+          http://www.gnu.org/software/emacs/manual/html_node/emacs/Regexps.html
+  -p|--patch-count
+          Patch Counter {PATCH COUNT MODE}
+  -s|--search
+          Find files or directories in the tree. {SEARCH MODE}
+  -g|--grep
+          Grep for "string" pattern in files. {GREP MODE}
+          For convenience (in unambiguous cases) this option is omitable. (default)
+EOF
+
+my $getOptionsResult = GetOptions(
+    'help|h' => \$showHelp,
+    'version|V' => \$showVersion,
+    'quiet|q!' => \$isQuiet,
+    'verbose|v!' => \$isVerbose,
+    'debug|D!' => \$debugOutput,
+    'case-insensitive|i!' => \$isCaseInsensitive,
+    'root=s' => \$rootDir,
+    'r=s' => \$regex,
+# TODO Implement:
+    'patch-count|p' => sub {$searchMode=0; $grepMode = 0; $pcMode = 1;},
+    'search|s' => sub {$searchMode=1; $grepMode = 0; $pcMode = 0;},
+    'grep|g' => sub {$searchMode=0; $grepMode = 1; $pcMode = 0;},
+# TODO Implement:
+    'exclude|x=s' => \@excludeList,
+    'build-dir|b=s' => \$buildDir,
+    'f=s' => \@fileFilterOptions,
+    'd=s' => \@dirFilterOptions,
+# TODO Implement:
+    'find-opt=s' => \@additionalFindOptions,
+# TODO Implement:
+    'grep-opt=s' => \@additionalGrepOptions,
+    'l' => \$layoutTestOnly,
+    'm' => \$makefilesOnly,
+    'E' => \$useExtendedMode,
+    'n' => \$disableColor,
+);
+
+my $numArgs        = $#ARGV + 1;
+
+@fileFilterOptions = split(/,/,join(',',@fileFilterOptions));
+@dirFilterOptions  = split(/,/,join(',',@dirFilterOptions));
+
+my $i              = $isCaseInsensitive ? "-i" : "-";
+my $E              = $useExtendedMode ? "-E" : "";
+my $colorCommand   = !$disableColor ? "--color=always" : "";
+
+$regexOption       = $i."regex \"$regex\"" if ($regex);
+$nameOption        = $i."name";
+$i                 = "" if ($i eq "-");
+
+my $searchString  = $ARGV[0];
+
+if ($grepMode) {
+    if (!$makefilesOnly && !$layoutTestOnly) {
+        $grepCommand = "| grep -E -v \"Makefile\*\|\.svn\|\.git\|LayoutTests\|ChangeLog\*\" | xargs grep -Hn $colorCommand $E $i \"$searchString\" 2>/dev/null";
+    } elsif ($makefilesOnly || $layoutTestOnly ) {
+        $grepCommand = "| grep -v '\.svn' | xargs grep -Hn $colorCommand $E $i \"$searchString\" 2>/dev/null";
+    } else {
+        print STDERR $helpMessage;
+        exit 1;
+    }
+}
+
+sub dbg($) {
+    if ($debugOutput) {
+        print "@_" . "\n";
+    }
+}
+
+sub error($) {
+    if (!$isQuiet) {
+        print color('red bold');
+        print "ERROR: @_" . "\n";
+        print color('reset');
+    }
+    exit 1;
+}
+
+sub warning($) {
+    if (!$isQuiet) {
+        print color('red bold');
+        print "WARNING: @_" . "\n";
+        print color('reset');
+    }
+}
+
+
+if (!$getOptionsResult || $showHelp) {
+    if ($isVerbose) {
+        system( "echo \"$verboseUsage\"|less" );
+    } else {
+        print STDERR $helpMessage;
+    }
+    exit 1;
+}
+
+if (!$numArgs) {
+    print STDERR $helpMessage;
+    exit 1;
+}
+
+if ($pcMode) {
+    dbg("PATCH-COUNT");
+    exit 0;
+}
+
+$rootDir = abs_path($rootDir);
+
+if ($layoutTestOnly) {
+    push(@dirFilterOptions, "LayoutTests");
+}
+
+if (!@dirFilterOptions) {
+    push(@dirFilterOptions, ".");
+}
+
+if ( ! -d $rootDir ) {
+    error("Given search root $rootDir is not a directory!");
+}
+
+my @filesCache;
+
+sub crawl() {
+    foreach my $dir (@dirFilterOptions) {
+        if (! -d $dir) {
+            warning("Skipping $dir: not a directory!");
+        } elsif ($searchMode) {
+            dbg("--- find $dir $regexOption $nameOption \"$searchString\" | grep -E $colorCommand \"$searchString\" ---");
+            push(@filesCache, qx{find $dir $regexOption $nameOption "$searchString"| grep -E $colorCommand "$searchString"});
+        } elsif ($makefilesOnly) {
+            push(@filesCache, qx{find $dir $nameOption "Makefile*" $grepCommand});
+        } elsif (@fileFilterOptions) {
+            foreach my $filter (@fileFilterOptions) {
+                dbg("--- find $dir $regexOption $nameOption \"*$filter*\" $grepCommand ---");
+                push(@filesCache, qx{find $dir $regexOption $nameOption "*$filter*" $grepCommand});
+            }
+        } else {
+            dbg("--- find $dir $regexOption $grepCommand ---");
+            push(@filesCache, qx{find $dir $regexOption $grepCommand});
+        }
+    }
+    return scalar (@filesCache);
+}
+
+my $matchCount = crawl();
+foreach my $file (@filesCache) {#(keys %filteredFiles) {
+    print "$file";
+}
+
+dbg("STRING=$searchString");
+dbg("COUNT=$matchCount");
