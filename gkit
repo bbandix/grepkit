@@ -57,7 +57,7 @@ my $debugOutput        = 0;
 my $makefilesOnly      = 0;
 my $layoutTestOnly     = 0;
 
-my $disableColor           = 0;
+my $disableColor       = 0;
 my $useExtendedMode    = 0;
 my $isCaseInsensitive  = 0;
 my $shouldExclude      = 0;
@@ -99,7 +99,7 @@ Main options:
   --find-opt option               Specify additional commant line option(s) for find
   --grep-opt option               Specify additional commant line option(s) for grep
   --root rootDir                  Set the path of the search root.
-  -x|--exclude [string] Exclude lines from output which match the "string" pattern.
+  -x|--exclude [string]           Exclude lines from output which match the "string" pattern.
   -p|--patch-count                Patch Counter               {PATCH COUNT MODE}
   -s|--search                     Run in search mode.         {SEARCH MODE}
   -g|--grep                       Run in grep mode (default). {GREP MODE}
@@ -252,8 +252,8 @@ sub crawl() {
         if (! -d $dir) {
             warning("Skipping $dir: not a directory!");
         } elsif ($searchMode) {
-            dbg("--- find $dir $regexOption $nameOption \"$searchString\" | grep -E $colorCommand \"$searchString\" ---");
-            push(@filesCache, qx{find $dir $regexOption $nameOption "$searchString"| grep -E $colorCommand "$searchString"});
+            dbg("--- find $dir $regexOption $nameOption \"$searchString\" | grep $i -E $colorCommand \"$searchString\" ---");
+            push(@filesCache, qx{find $dir $regexOption $nameOption "$searchString"| grep $i -E $colorCommand "$searchString"});
         } elsif ($makefilesOnly) {
             push(@filesCache, qx{find $dir $nameOption "Makefile*" $grepCommand});
         } elsif (@fileFilterOptions) {
